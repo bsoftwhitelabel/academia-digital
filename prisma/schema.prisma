@@ -1,0 +1,1056 @@
+// ============================================================
+// ACADEMIA DIGITAL — SCHEMA PRISMA
+// Neo Pulse para Grupo Oporto Forte Internacional
+// Stack: PostgreSQL + Prisma ORM
+// ============================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN   // Neo Pulse — acesso global
+  TENANT_ADMIN  // Admin da entidade formadora
+  TENANT_STAFF  // Equipa administrativa
+  TRAINER       // Formador
+  CLIENT_HR     // RH da empresa cliente
+  TRAINEE       // Formando
+}
+
+enum TrainingFormat {
+  PRESENCIAL
+  ELEARNING
+  BLENDED
+}
+
+enum TrainingStatus {
+  DRAFT
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  FEATURED
+  ARCHIVED
+}
+
+enum DocumentType {
+  FICHA_IDENTIFICACAO          // Doc 5
+  CONTRATO_FORMANDO            // Doc 7
+  CONTRATO_FORMADOR            // Doc 8
+  REGISTO_PRESENCAS            // Doc 10
+  AVALIACAO_FORMANDO           // Doc 11
+  REGISTO_OCORRENCIAS          // Doc 16
+  CERTIFICADO_CONCLUSAO
+  RELATORIO_FINAL              // Doc 18
+}
+
+enum SignatureStatus {
+  PENDING      // Aguardando habilitação do formador
+  ENABLED      // Habilitado pelo formador
+  SIGNED       // Assinado pelo formando
+  REJECTED     // Recusado / anulado
+}
+
+enum CheckInStatus {
+  CHECKED_IN
+  CHECKED_OUT
+  ABSENT
+  MANUAL       // Check-in manual pelo formador
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  PUSH
+  SMS
+}
+
+enum NotificationEvent {
+  ENROLLMENT_CONFIRMED
+  SESSION_REMINDER_24H
+  SESSION_REMINDER_2H
+  CHECKIN_AVAILABLE
+  SIGNATURE_ENABLED
+  CERTIFICATE_ISSUED
+  QUESTIONNAIRE_AVAILABLE
+  INQUIRY_RECEIVED
+  SESSION_CLOSED
+}
+
+enum FinancingSystem {
+  POPH
+  PORNORTE
+  FSE2020
+  PT2030
+  PRR
+  PRIVATE
+  OTHER
+}
+
+// ============================================================
+// MULTI-TENANCY
+// ============================================================
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique  // "oportoforte" → oportoforte.com/catalog
+  domain      String?  @unique  // domínio personalizado opcional
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // White Label branding
+  logoUrl          String?
+  faviconUrl       String?
+  primaryColor     String?  @default("#0B2447")
+  secondaryColor   String?  @default("#1566C0")
+  accentColor      String?  @default("#C9A520")
+  platformName     String?  @default("Academia Digital")
+  emailFromName    String?
+  emailFromAddress String?
+  cssOverride      String?  @db.Text
+
+  // DGERT / certificação
+  dgertCode        String?  // código de entidade acreditada
+  dgertLogoUrl     String?  // logo DGERT para documentos
+
+  // Configuração de integrações de notificação (WhatsApp/Email)
+  // Estrutura: { whatsapp: { enabled, accountSid, authToken, fromNumber, events: { ... } }, email: { ... } }
+  notifConfig      Json?
+
+  // Workflow de aprovações
+  requireEnrollmentApproval Boolean @default(false)
+
+  // Google Calendar OAuth
+  googleCalendarTokens Json?
+  googleCalendarEnabled Boolean @default(false)
+
+  // Relações
+  users          User[]
+  clientOrgs     ClientOrg[]
+  courses        Course[]
+  trainingPlans  TrainingPlan[]
+  trainingActions TrainingAction[]
+  rooms          Room[]
+  trainers       Trainer[]
+  financingSystems TenantFinancingSystem[]
+  notificationTemplates NotificationTemplate[]
+  auditLogs      AuditLog[]
+  inquiries      Inquiry[]
+
+  @@map("tenants")
+}
+
+// ============================================================
+// UTILIZADORES
+// ============================================================
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String?
+  role         UserRole
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relações de tenant
+  tenantId     String
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+
+  // Perfil
+  firstName    String
+  lastName     String
+  avatarUrl    String?
+  phone        String?
+
+  // Preferências de notificação
+  notifEmail    Boolean @default(true)
+  notifWhatsApp Boolean @default(true)
+
+  // Links únicos de acesso (para formandos sem password)
+  magicLinks   MagicLink[]
+
+  // Referências específicas por role
+  trainerProfile Trainer?
+  traineeProfile Trainee?
+  clientHrOrg  ClientOrg? @relation("HRManager", fields: [clientHrOrgId], references: [id])
+  clientHrOrgId String?
+
+  auditLogs    AuditLog[]
+
+  @@index([tenantId])
+  @@index([email])
+  @@map("users")
+}
+
+model MagicLink {
+  id        String   @id @default(cuid())
+  token     String   @unique @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@map("magic_links")
+}
+
+// ============================================================
+// ENTIDADES CLIENTE (ClientOrg)
+// ============================================================
+
+model ClientOrg {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  name        String
+  code        String?
+  nif         String?
+  address     String?
+  city        String?
+  country     String   @default("PT")
+  postalCode  String?
+  phone       String?
+  email       String?
+  website     String?
+
+  // White Label da org cliente nos documentos
+  logoUrl     String?  // Logo que aparece nos PDFs ao lado do logo do tenant
+
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relações
+  hrManagers      User[]           @relation("HRManager")
+  trainees        Trainee[]
+  trainingActions TrainingAction[]
+  contracts       Contract[]
+
+  @@index([tenantId])
+  @@map("client_orgs")
+}
+
+// ============================================================
+// FORMADORES (TRAINERS)
+// ============================================================
+
+model Trainer {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+
+  // Dados profissionais
+  ccpNumber        String?   // Certificado de Competências Pedagógicas
+  isExternal       Boolean   @default(false)
+  eTrainer         Boolean   @default(false)  // certificado e-formador
+  preferredSchedule String?
+  yearsExperiencePresential Int @default(0)
+  yearsExperienceDistance   Int @default(0)
+  vatRate          Float?    // taxa de IRS para pagamento
+
+  // Localização e áreas
+  regions          String[]  // array de regiões de intervenção
+  trainingAreas    TrainingArea[]
+
+  trainingActions  TrainingActionTrainer[]
+  sessions         TrainingSession[]
+
+  @@index([tenantId])
+  @@map("trainers")
+}
+
+// ============================================================
+// FORMANDOS (TRAINEES)
+// ============================================================
+
+model Trainee {
+  id           String   @id @default(cuid())
+  tenantId     String
+  // Note: trainee pode existir sem userId (antes de criar conta)
+  userId       String?  @unique
+  user         User?    @relation(fields: [userId], references: [id])
+
+  // Org cliente
+  clientOrgId  String?
+  clientOrg    ClientOrg? @relation(fields: [clientOrgId], references: [id])
+
+  // Dados pessoais (DGERT obrigatório)
+  firstName    String
+  lastName     String
+  preferredName String?
+  gender       String?
+  birthDate    DateTime?
+  nationality  String?
+  idType       String?
+  idNumber     String?
+  idValidUntil DateTime?
+  nif          String?
+  ssn          String?   // Número de Segurança Social
+
+  // Contacto
+  email        String
+  phone        String?
+  address      String?
+  postalCode   String?
+  city         String?
+  country      String   @default("PT")
+
+  // Perfil profissional (DGERT)
+  jobTitle     String?
+  employmentStatus String?
+  educationLevel   String?
+  educationCourse  String?
+  caeCode      String?   // Código de Atividade Económica
+
+  // RGPD
+  gdprConsent  Boolean  @default(false)
+  gdprConsentAt DateTime?
+
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relações
+  enrollments  Enrollment[]
+  checkIns     CheckIn[]
+  signatures   DocumentSignature[]
+  certificates Certificate[]
+
+  @@index([tenantId])
+  @@index([clientOrgId])
+  @@index([email])
+  @@map("trainees")
+}
+
+// ============================================================
+// ÁREAS DE FORMAÇÃO (CITE/DGERT)
+// ============================================================
+
+model TrainingArea {
+  id          String   @id @default(cuid())
+  citeCode    String?  // código CITE oficial
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  parentId    String?  // hierarquia: área > sub-área > especialização
+  parent      TrainingArea?  @relation("AreaHierarchy", fields: [parentId], references: [id])
+  children    TrainingArea[] @relation("AreaHierarchy")
+
+  // Catálogo público
+  catalogVisible Boolean @default(true)
+  catalogOrder   Int     @default(0)
+
+  courses  Course[]
+  trainers Trainer[]
+
+  @@map("training_areas")
+}
+
+// ============================================================
+// CURSOS
+// ============================================================
+
+model Course {
+  id           String      @id @default(cuid())
+  tenantId     String
+  tenant       Tenant      @relation(fields: [tenantId], references: [id])
+
+  // Identificação
+  name         String
+  slug         String
+  code         String?
+  sigla        String?
+  durationHours Float
+
+  // Classificação
+  areaId       String?
+  area         TrainingArea? @relation(fields: [areaId], references: [id])
+  format       TrainingFormat
+  certType     String?       // tipo de certificado/diploma
+
+  // Conteúdo
+  shortDescription String?  @db.Text
+  fullDescription  String?  @db.Text
+  objectives       String?  @db.Text
+  specificObjectives String? @db.Text
+  methodology      String?  @db.Text
+  evaluationMethod String?  @db.Text
+  targetAudience   String?  @db.Text
+  prerequisites    String?  @db.Text
+
+  // Catálogo público
+  status           CourseStatus @default(DRAFT)
+  coverImageUrl    String?
+  price            Float?
+  priceNotes       String?
+  tags             String[]
+  seoTitle         String?
+  seoDescription   String?
+  publishedAt      DateTime?
+
+  // DGERT / regulatório
+  requiresFinalGrade      Boolean @default(false)
+  requiresFullValidation  Boolean @default(false)
+  quantitativeEvaluation  Boolean @default(false)
+  qualificationLevel      String?
+
+  // Moodle
+  moodleCourseId  String?
+  moodleCategory  String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relações
+  modules      CourseModule[]
+  trainingActions TrainingAction[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, status])
+  @@map("courses")
+}
+
+model CourseModule {
+  id          String  @id @default(cuid())
+  courseId    String
+  course      Course  @relation(fields: [courseId], references: [id])
+  name        String
+  description String? @db.Text
+  durationHours Float
+  order       Int
+
+  @@index([courseId])
+  @@map("course_modules")
+}
+
+// ============================================================
+// PLANOS DE FORMAÇÃO
+// ============================================================
+
+model TrainingPlan {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  name        String
+  year        Int?
+  startDate   DateTime
+  endDate     DateTime
+  isInternal  Boolean  @default(false)
+  budget      Float?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  trainingActions TrainingAction[]
+
+  @@index([tenantId])
+  @@map("training_plans")
+}
+
+// ============================================================
+// AÇÕES DE FORMAÇÃO
+// ============================================================
+
+model TrainingAction {
+  id               String         @id @default(cuid())
+  tenantId         String
+  tenant           Tenant         @relation(fields: [tenantId], references: [id])
+
+  // Curso e plano
+  courseId         String
+  course           Course         @relation(fields: [courseId], references: [id])
+  planId           String?
+  plan             TrainingPlan?  @relation(fields: [planId], references: [id])
+
+  // Cliente
+  clientOrgId      String?
+  clientOrg        ClientOrg?     @relation(fields: [clientOrgId], references: [id])
+
+  // Identificação
+  actionCode       String?
+  actionNumber     String?
+
+  // Datas e local
+  startDate        DateTime
+  endDate          DateTime
+  roomId           String?
+  room             Room?          @relation(fields: [roomId], references: [id])
+
+  // Configuração
+  format           TrainingFormat
+  financingSystem  FinancingSystem?
+  maxTrainees      Int?
+  minTrainees      Int?
+
+  // Estado
+  status           TrainingStatus @default(DRAFT)
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  // Relações
+  trainers         TrainingActionTrainer[]
+  sessions         TrainingSession[]
+  enrollments      Enrollment[]
+  documents        TrainingDocument[]
+  occurrences      Occurrence[]
+
+  @@index([tenantId])
+  @@index([clientOrgId])
+  @@index([status])
+  @@map("training_actions")
+}
+
+model TrainingActionTrainer {
+  id               String         @id @default(cuid())
+  trainingActionId String
+  trainingAction   TrainingAction @relation(fields: [trainingActionId], references: [id])
+  trainerId        String
+  trainer          Trainer        @relation(fields: [trainerId], references: [id])
+  role             String         @default("MAIN") // MAIN, ASSISTANT, COORDINATOR
+
+  @@unique([trainingActionId, trainerId])
+  @@map("training_action_trainers")
+}
+
+// ============================================================
+// SESSÕES
+// ============================================================
+
+model TrainingSession {
+  id               String         @id @default(cuid())
+  trainingActionId String
+  trainingAction   TrainingAction @relation(fields: [trainingActionId], references: [id])
+  trainerId        String
+  trainer          Trainer        @relation(fields: [trainerId], references: [id])
+
+  sessionDate      DateTime
+  startTime        String         // "09:00"
+  endTime          String         // "17:00"
+  durationHours    Float
+
+  // Check-in
+  checkinOpenAt    DateTime?      // hora_inicio - 15min (calculado)
+  checkinCloseAt   DateTime?      // hora_fim ou encerramento manual
+  checkinQrCode    String?        // token único para QR Code
+  checkinQrExpiresAt DateTime?
+
+  // Estado
+  isOpen           Boolean        @default(false) // sessão em curso
+  isClosed         Boolean        @default(false) // sessão encerrada pelo formador
+  closedAt         DateTime?
+  closedById       String?
+
+  // Sumário
+  summary          String?        @db.Text
+  didacticResources String[]      // ["PROJETOR", "COMPUTADOR", "QUADRO", ...]
+
+  // Assinatura do formador
+  trainerSignatureUrl String?
+  trainerSignedAt     DateTime?
+
+  // Google Calendar
+  googleEventId    String?
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  checkIns         CheckIn[]
+  signatures       DocumentSignature[]
+
+  @@index([trainingActionId])
+  @@map("training_sessions")
+}
+
+// ============================================================
+// INSCRIÇÕES
+// ============================================================
+
+model Enrollment {
+  id               String         @id @default(cuid())
+  trainingActionId String
+  trainingAction   TrainingAction @relation(fields: [trainingActionId], references: [id])
+  traineeId        String
+  trainee          Trainee        @relation(fields: [traineeId], references: [id])
+
+  enrolledAt       DateTime       @default(now())
+  status           String         @default("CONFIRMED") // CONFIRMED, CANCELLED, COMPLETED
+  completedAt      DateTime?
+
+  // Avaliação
+  finalGrade       Float?
+  passed           Boolean?
+
+  @@unique([trainingActionId, traineeId])
+  @@index([traineeId])
+  @@map("enrollments")
+}
+
+// ============================================================
+// CHECK-IN DIGITAL
+// ============================================================
+
+model CheckIn {
+  id          String          @id @default(cuid())
+  sessionId   String
+  session     TrainingSession @relation(fields: [sessionId], references: [id])
+  traineeId   String
+  trainee     Trainee         @relation(fields: [traineeId], references: [id])
+
+  status      CheckInStatus   @default(CHECKED_IN)
+  checkedInAt DateTime        @default(now())
+  checkedOutAt DateTime?
+
+  // Metadados de rastreabilidade
+  ipAddress   String?
+  userAgent   String?
+  isManual    Boolean         @default(false)
+  manualNotes String?
+  registeredById String?      // userId do formador (se manual)
+
+  @@unique([sessionId, traineeId])
+  @@index([sessionId])
+  @@index([traineeId])
+  @@map("check_ins")
+}
+
+// ============================================================
+// ASSINATURAS DIGITAIS
+// ============================================================
+
+model DocumentSignature {
+  id           String          @id @default(cuid())
+  sessionId    String?
+  session      TrainingSession? @relation(fields: [sessionId], references: [id])
+  traineeId    String?
+  trainee      Trainee?        @relation(fields: [traineeId], references: [id])
+  trainerId    String?         // assinatura do formador
+  documentType DocumentType
+
+  status       SignatureStatus @default(PENDING)
+
+  // Habilitação pelo formador
+  enabledAt    DateTime?
+  enabledById  String?
+  enabledNotes String?         // justificação se fora do prazo
+
+  // A assinatura em si
+  signatureUrl String?         // URL no R2 (PNG base64)
+  signedAt     DateTime?
+  ipAddress    String?
+  userAgent    String?
+
+  // Invalidação
+  revokedAt    DateTime?
+  revokedById  String?
+  revokedReason String?
+
+  createdAt    DateTime        @default(now())
+
+  @@index([sessionId])
+  @@index([traineeId])
+  @@map("document_signatures")
+}
+
+// ============================================================
+// DOCUMENTOS GERADOS (PDFs)
+// ============================================================
+
+model TrainingDocument {
+  id               String         @id @default(cuid())
+  trainingActionId String
+  trainingAction   TrainingAction @relation(fields: [trainingActionId], references: [id])
+
+  documentType     DocumentType
+  version          Int            @default(1)
+  fileUrl          String?        // URL no R2
+  generatedAt      DateTime       @default(now())
+  generatedById    String?
+
+  // Verificação pública
+  verificationCode String?        @unique @default(cuid()) // para QR de autenticidade
+
+  @@index([trainingActionId])
+  @@map("training_documents")
+}
+
+// ============================================================
+// OCORRÊNCIAS
+// ============================================================
+
+model Occurrence {
+  id               String         @id @default(cuid())
+  trainingActionId String
+  trainingAction   TrainingAction @relation(fields: [trainingActionId], references: [id])
+
+  description      String         @db.Text
+  occurredAt       DateTime
+  reportedById     String
+
+  // Assinaturas da ficha de ocorrência
+  trainerSignatureUrl     String?
+  responsibleSignatureUrl String?
+
+  createdAt        DateTime       @default(now())
+
+  @@index([trainingActionId])
+  @@map("occurrences")
+}
+
+// ============================================================
+// CERTIFICADOS
+// ============================================================
+
+model Certificate {
+  id          String   @id @default(cuid())
+  traineeId   String
+  trainee     Trainee  @relation(fields: [traineeId], references: [id])
+
+  courseName  String
+  courseCode  String?
+  durationHours Float
+  completedAt DateTime
+  issuedAt    DateTime @default(now())
+  expiresAt   DateTime?
+
+  // Ficheiro
+  fileUrl     String?
+  verificationCode String? @unique @default(cuid())
+
+  @@index([traineeId])
+  @@map("certificates")
+}
+
+// ============================================================
+// SALAS / LOCAIS
+// ============================================================
+
+model Room {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  name        String
+  city        String?
+  country     String   @default("PT")
+  address     String?
+  capacity    Int?
+  equipment   String[] // ["PROJETOR", "COMPUTADOR", "QUADRO", ...]
+  isActive    Boolean  @default(true)
+  costPerDay  Float?
+
+  // Geo
+  latitude    Float?
+  longitude   Float?
+  googleMapsUrl String?
+
+  trainingActions TrainingAction[]
+
+  @@index([tenantId])
+  @@map("rooms")
+}
+
+// ============================================================
+// CATÁLOGO PÚBLICO — FORMULÁRIOS DE INTERESSE
+// ============================================================
+
+model Inquiry {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+
+  courseId    String?
+  courseName  String?
+
+  // Dados do prospect
+  firstName   String
+  lastName    String
+  email       String
+  company     String?
+  jobTitle    String?
+  phone       String?
+  message     String?  @db.Text
+
+  // Tracking
+  status      String   @default("NEW") // NEW, CONTACTED, CONVERTED, LOST
+  source      String?  // URL de origem
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@map("inquiries")
+}
+
+// ============================================================
+// NOTIFICAÇÕES
+// ============================================================
+
+model NotificationTemplate {
+  id          String              @id @default(cuid())
+  tenantId    String
+  tenant      Tenant              @relation(fields: [tenantId], references: [id])
+
+  event       NotificationEvent
+  channel     NotificationChannel
+  subject     String?
+  bodyHtml    String?             @db.Text
+  bodyText    String?             @db.Text
+  isActive    Boolean             @default(true)
+
+  @@unique([tenantId, event, channel])
+  @@map("notification_templates")
+}
+
+model NotificationLog {
+  id          String              @id @default(cuid())
+  tenantId    String
+  event       NotificationEvent
+  channel     NotificationChannel
+  recipient   String              // email, phone, etc.
+  subject     String?
+  status      String              // SENT, DELIVERED, BOUNCED, FAILED
+  errorMsg    String?
+  sentAt      DateTime            @default(now())
+
+  // Referências
+  traineeId   String?
+  trainerId   String?
+  sessionId   String?
+
+  @@index([tenantId])
+  @@map("notification_logs")
+}
+
+// ============================================================
+// QUESTIONÁRIOS DE SATISFAÇÃO
+// ============================================================
+
+model Questionnaire {
+  id               String         @id @default(cuid())
+  tenantId         String
+  name             String
+  format           TrainingFormat
+  targetRole       String         // TRAINEE, TRAINER
+  context          String         // MODULE, ACTION
+
+  questions        QuestionnaireQuestion[]
+  responses        QuestionnaireResponse[]
+
+  @@index([tenantId])
+  @@map("questionnaires")
+}
+
+model QuestionnaireQuestion {
+  id              String        @id @default(cuid())
+  questionnaireId String
+  questionnaire   Questionnaire @relation(fields: [questionnaireId], references: [id])
+  text            String
+  type            String        @default("SCALE") // SCALE, TEXT, BOOLEAN
+  scaleMin        Int           @default(1)
+  scaleMax        Int           @default(5)
+  order           Int
+  isRequired      Boolean       @default(true)
+
+  answers         QuestionnaireAnswer[]
+
+  @@index([questionnaireId])
+  @@map("questionnaire_questions")
+}
+
+model QuestionnaireResponse {
+  id              String         @id @default(cuid())
+  questionnaireId String
+  questionnaire   Questionnaire  @relation(fields: [questionnaireId], references: [id])
+  trainingActionId String?
+  traineeId       String?
+  trainerId       String?
+  respondedAt     DateTime       @default(now())
+  token           String         @unique @default(cuid()) // acesso sem login
+
+  answers         QuestionnaireAnswer[]
+
+  @@index([questionnaireId])
+  @@map("questionnaire_responses")
+}
+
+model QuestionnaireAnswer {
+  id          String                @id @default(cuid())
+  responseId  String
+  response    QuestionnaireResponse @relation(fields: [responseId], references: [id])
+  questionId  String
+  question    QuestionnaireQuestion @relation(fields: [questionId], references: [id])
+  scaleValue  Int?
+  textValue   String?               @db.Text
+
+  @@index([responseId])
+  @@map("questionnaire_answers")
+}
+
+// ============================================================
+// SISTEMAS DE FINANCIAMENTO
+// ============================================================
+
+model TenantFinancingSystem {
+  id          String          @id @default(cuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id])
+  system      FinancingSystem
+  name        String
+  description String?
+  isActive    Boolean         @default(true)
+
+  @@unique([tenantId, system])
+  @@map("tenant_financing_systems")
+}
+
+// ============================================================
+// CONTRATOS
+// ============================================================
+
+model Contract {
+  id          String    @id @default(cuid())
+  clientOrgId String
+  clientOrg   ClientOrg @relation(fields: [clientOrgId], references: [id])
+  code        String?
+  description String?
+  startDate   DateTime
+  endDate     DateTime?
+  value       Float?
+  fileUrl     String?
+  createdAt   DateTime  @default(now())
+
+  @@index([clientOrgId])
+  @@map("contracts")
+}
+
+// ============================================================
+// LISTA DE ESPERA (CATÁLOGO PÚBLICO)
+// ============================================================
+
+model Waitlist {
+  id          String   @id @default(cuid())
+  tenantId    String
+  courseId    String?
+  courseName  String
+
+  firstName   String
+  lastName    String
+  email       String
+  phone       String?
+  company     String?
+  dataConsent Boolean  @default(false)
+
+  status      String   @default("WAITING") // WAITING, NOTIFIED, ENROLLED, DISMISSED
+  notifiedAt  DateTime?
+  enrolledAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([courseId])
+  @@map("waitlist")
+}
+
+// ============================================================
+// AUDITORIA
+// ============================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+
+  action      String   // CREATE, UPDATE, DELETE, VIEW, LOGIN, LOGOUT
+  resource    String   // "Course", "TrainingAction", etc.
+  resourceId  String?
+  changes     Json?    // { before: {...}, after: {...} }
+
+  ipAddress   String?
+  userAgent   String?
+  duration    Int?     // ms
+
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// WORKFLOW DE APROVAÇÕES (Sprint 4)
+// ============================================================
+
+model ApprovalRequest {
+  id            String   @id @default(cuid())
+  tenantId      String
+  type          String   // "ENROLLMENT" | "TRAINING_PLAN" | "TRAINING_ACTION"
+  resourceId    String   // id do recurso a aprovar
+  resourceType  String
+  requestedById String
+  requestedAt   DateTime @default(now())
+  status        String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  reviewedById  String?
+  reviewedAt    DateTime?
+  reviewNotes   String?  @db.Text
+  metadata      Json?    // dados adicionais do pedido
+
+  @@index([tenantId, status])
+  @@map("approval_requests")
+}
+
+// ============================================================
+// GESTÃO ORÇAMENTAL (Sprint 4)
+// ============================================================
+
+model Budget {
+  id             String   @id @default(cuid())
+  tenantId       String
+  trainingPlanId String?  @unique
+  trainingActionId String? @unique
+  budgetedAmount Float    @default(0)
+  spentAmount    Float    @default(0)
+  currency       String   @default("EUR")
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("budgets")
+}
+
+model TrainingCost {
+  id               String   @id @default(cuid())
+  trainingActionId String
+  tenantId         String
+  description      String
+  category         String   // "TRAINER" | "ROOM" | "MATERIALS" | "OTHER"
+  amount           Float
+  date             DateTime
+  invoiceRef       String?
+  createdAt        DateTime @default(now())
+
+  @@index([trainingActionId])
+  @@map("training_costs")
+}
