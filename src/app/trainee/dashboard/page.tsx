@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Award, BookOpen, Clock, Calendar as CalendarIcon, ArrowRight } from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
-import ptBR from "date-fns/locale/pt-BR";
+import { ptBR } from "date-fns/locale/pt-BR";
 
 export default async function TraineeDashboard() {
   const session = await getServerSession(authOptions);

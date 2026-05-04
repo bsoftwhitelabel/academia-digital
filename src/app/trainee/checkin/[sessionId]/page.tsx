@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CheckInButton } from "./CheckInButton";
 import { Clock, Calendar, MapPin, XCircle } from "lucide-react";
 import { format } from "date-fns";
-import ptBR from "date-fns/locale/pt-BR";
+import { ptBR } from "date-fns/locale/pt-BR";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 

@@ -60,10 +60,10 @@ export async function GET(
   }));
 
   // Bloco "Global" sempre — média de todos os scale answers
-  const allScale = blocksArr.reduce((acc, b) => acc + b.sum, 0);
-  const allCount = blocksArr.reduce((acc, b) => acc + b.count, 0);
+  const allScaleSum = Object.values(blocks).reduce((acc, b) => acc + b.sum, 0);
+  const allCount = Object.values(blocks).reduce((acc, b) => acc + b.count, 0);
   if (allCount > 0) {
-    blocksArr.push({ label: "Global", average: allScale / allCount, count: allCount });
+    blocksArr.push({ label: "Global", average: allScaleSum / allCount, count: allCount });
   }
 
   const distArr = [1, 2, 3, 4, 5].map((s) => ({ score: s, count: distribution[s] || 0 }));
@@ -86,8 +86,9 @@ export async function GET(
   });
 
   const pdf = await generatePDF(html, { landscape: false });
+  const pdfBytes = new Uint8Array(pdf);
   const fname = `satisfacao-${action.actionCode || action.id.slice(0, 8)}.pdf`;
-  return new NextResponse(pdf, {
+  return new NextResponse(pdfBytes, {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",

@@ -5,16 +5,16 @@ import prisma from "@/lib/prisma";
 
 async function authorize() {
   const session = await getServerSession(authOptions);
-  if (!session) return { error: "Unauthorized", status: 401 as const };
+  if (!session) return { ok: false as const, error: "Unauthorized", status: 401 as const };
   if (!["TENANT_ADMIN", "TENANT_STAFF", "SUPER_ADMIN"].includes(session.user.role)) {
-    return { error: "Forbidden", status: 403 as const };
+    return { ok: false as const, error: "Forbidden", status: 403 as const };
   }
   return { ok: true, session } as const;
 }
 
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
   const auth = await authorize();
-  if (!("ok" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = await req.json();
 
   const existing = await prisma.trainingAction.findUnique({ where: { id: params.id } });

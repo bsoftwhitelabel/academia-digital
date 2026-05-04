@@ -6,14 +6,14 @@ import { logAudit } from "@/lib/audit";
 
 async function authorize(actionId: string) {
   const session = await getServerSession(authOptions);
-  if (!session) return { error: "Unauthorized", status: 401 as const };
+  if (!session) return { ok: false as const, error: "Unauthorized", status: 401 as const };
   if (!["TENANT_ADMIN", "TENANT_STAFF", "SUPER_ADMIN"].includes(session.user.role)) {
-    return { error: "Forbidden", status: 403 as const };
+    return { ok: false as const, error: "Forbidden", status: 403 as const };
   }
   const action = await prisma.trainingAction.findUnique({ where: { id: actionId } });
-  if (!action) return { error: "Not found", status: 404 as const };
+  if (!action) return { ok: false as const, error: "Not found", status: 404 as const };
   if (action.tenantId !== session.user.tenantId && session.user.role !== "SUPER_ADMIN") {
-    return { error: "Cross-tenant", status: 403 as const };
+    return { ok: false as const, error: "Cross-tenant", status: 403 as const };
   }
   return { ok: true, session, action } as const;
 }
@@ -23,7 +23,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const auth = await authorize(params.id);
-  if (!("ok" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = await req.json();
   if (!body.description || body.amount == null || !body.category) {
     return NextResponse.json({ error: "description, category e amount obrigatórios" }, { status: 400 });
@@ -67,7 +67,7 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   const auth = await authorize(params.id);
-  if (!("ok" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const body = await req.json();
   // Atualizar orçamento
   const before = await prisma.budget.findUnique({ where: { trainingActionId: auth.action.id } });

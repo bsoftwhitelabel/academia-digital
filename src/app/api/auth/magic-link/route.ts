@@ -3,7 +3,9 @@ import prisma from "@/lib/prisma";
 import { Resend } from "resend";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
 
 export async function POST(req: Request) {
   try {
@@ -46,7 +48,7 @@ export async function POST(req: Request) {
     // O sessionId pode ser usado no redirect após o login, então passamos via query string
     const magicLinkUrl = `${appUrl}/auth/magic/${token}${sessionId ? `?sessionId=${sessionId}` : ''}`;
 
-    if (process.env.RESEND_API_KEY) {
+    if (resend) {
       await resend.emails.send({
         from: "Academia Digital <no-reply@resend.dev>", 
         to: [email],
