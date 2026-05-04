@@ -4,9 +4,13 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import prisma from "./prisma";
 import bcrypt from "bcryptjs";
 import { logAudit } from "./audit";
+import crypto from "crypto";
 
 export const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma) as any,
+  secret: process.env.NEXTAUTH_SECRET,
+  trustHost: true,
+  debug: process.env.NEXTAUTH_DEBUG === "1",
   session: { strategy: "jwt" },
   providers: [
     CredentialsProvider({
@@ -17,6 +21,10 @@ export const authOptions: NextAuthOptions = {
         magicToken: { label: "Magic Token", type: "text" },
       },
       async authorize(credentials, req) {
+        const anon = (v?: string | null) =>
+          v
+            ? crypto.createHash("sha256").update(v).digest("hex").slice(0, 10)
+            : "—";
         // Recolher IP e UA para auditoria
         const headers = (req?.headers || {}) as Record<string, string>;
         const ip =
@@ -25,72 +33,89 @@ export const authOptions: NextAuthOptions = {
           null;
         const ua = headers["user-agent"] || null;
 
-        // Fluxo de Magic Link
-        if (credentials?.magicToken) {
-          const magicLink = await prisma.magicLink.findUnique({
-            where: { token: credentials.magicToken },
-            include: { user: true },
-          });
+        try {
+          // Fluxo de Magic Link
+          if (credentials?.magicToken) {
+            const magicLink = await prisma.magicLink.findUnique({
+              where: { token: credentials.magicToken },
+              include: { user: true },
+            });
 
-          if (!magicLink || magicLink.expiresAt < new Date() || magicLink.usedAt) {
-            return null; // Link inválido, expirado ou já utilizado
+            if (!magicLink || magicLink.expiresAt < new Date() || magicLink.usedAt) {
+              console.warn("[auth] magic-link invalid", {
+                token: anon(credentials.magicToken),
+              });
+              return null; // Link inválido, expirado ou já utilizado
+            }
+
+            // Marcar como utilizado
+            await prisma.magicLink.update({
+              where: { id: magicLink.id },
+              data: { usedAt: new Date() },
+            });
+
+            console.info("[auth] magic-link ok", { user: anon(magicLink.user.email) });
+            return {
+              id: magicLink.user.id,
+              email: magicLink.user.email,
+              role: magicLink.user.role,
+              tenantId: magicLink.user.tenantId,
+              firstName: magicLink.user.firstName,
+            };
           }
 
-          // Marcar como utilizado
-          await prisma.magicLink.update({
-            where: { id: magicLink.id },
-            data: { usedAt: new Date() },
+          // Fluxo normal (Email/Password)
+          if (!credentials?.email || !credentials?.password) {
+            console.warn("[auth] credentials missing");
+            return null;
+          }
+
+          const user = await prisma.user.findUnique({
+            where: { email: credentials.email },
           });
 
+          if (!user) {
+            console.warn("[auth] user not found", { email: anon(credentials.email) });
+            return null;
+          }
+          if (!user.passwordHash) {
+            console.warn("[auth] user has no passwordHash", { email: anon(credentials.email) });
+            return null;
+          }
+
+          const isPasswordValid = await bcrypt.compare(
+            credentials.password,
+            user.passwordHash
+          );
+
+          if (!isPasswordValid) {
+            console.warn("[auth] invalid password", { email: anon(credentials.email) });
+            return null;
+          }
+
+          // Log LOGIN no AuditLog (best-effort)
+          await logAudit({
+            action: "LOGIN",
+            resource: "User",
+            resourceId: user.id,
+            userId: user.id,
+            tenantId: user.tenantId,
+            ip: ip ?? undefined,
+            userAgent: ua ?? undefined,
+          });
+
+          console.info("[auth] credentials ok", { user: anon(user.email) });
           return {
-            id: magicLink.user.id,
-            email: magicLink.user.email,
-            role: magicLink.user.role,
-            tenantId: magicLink.user.tenantId,
-            firstName: magicLink.user.firstName,
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            tenantId: user.tenantId,
+            firstName: user.firstName,
           };
-        }
-
-        // Fluxo normal (Email/Password)
-        if (!credentials?.email || !credentials?.password) {
+        } catch (e) {
+          console.error("[auth] authorize error", e);
           return null;
         }
-
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
-
-        if (!user || !user.passwordHash) {
-          return null;
-        }
-
-        const isPasswordValid = await bcrypt.compare(
-          credentials.password,
-          user.passwordHash
-        );
-
-        if (!isPasswordValid) {
-          return null;
-        }
-
-        // Log LOGIN no AuditLog (best-effort)
-        await logAudit({
-          action: "LOGIN",
-          resource: "User",
-          resourceId: user.id,
-          userId: user.id,
-          tenantId: user.tenantId,
-          ip: ip ?? undefined,
-          userAgent: ua ?? undefined,
-        });
-
-        return {
-          id: user.id,
-          email: user.email,
-          role: user.role,
-          tenantId: user.tenantId,
-          firstName: user.firstName,
-        };
       },
     }),
   ],
