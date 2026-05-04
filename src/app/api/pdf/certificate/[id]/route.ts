@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
-import puppeteer from "puppeteer";
+import { generatePDF } from "@/lib/pdf";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function GET(
   req: Request,
@@ -72,22 +75,12 @@ export async function GET(
       </html>
     `;
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-    
-    const page = await browser.newPage();
-    await page.setContent(htmlContent, { waitUntil: "networkidle0" });
-    
-    const pdfBuffer = await page.pdf({
+    const pdfBuffer = await generatePDF(htmlContent, {
       format: "A4",
       landscape: true,
       printBackground: true,
       margin: { top: "0", right: "0", bottom: "0", left: "0" },
     });
-
-    await browser.close();
 
     return new NextResponse(pdfBuffer, {
       status: 200,

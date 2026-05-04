@@ -15,6 +15,9 @@ import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 import QRCode from "qrcode";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const SUPPORTED = new Set([
   ...Object.keys(ACTION_RENDERERS),
   "CERTIFICADO",

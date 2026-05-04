@@ -1,4 +1,3 @@
-import puppeteer from "puppeteer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 export type PDFOptions = {
@@ -8,6 +7,28 @@ export type PDFOptions = {
   printBackground?: boolean;
 };
 
+async function launchPdfBrowser() {
+  if (process.env.VERCEL) {
+    const chromiumMod = await import("@sparticuz/chromium");
+    const chromium = chromiumMod.default;
+    const puppeteerMod = await import("puppeteer-core");
+    const puppeteer = puppeteerMod.default;
+    return puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+  }
+
+  const puppeteerMod = await import("puppeteer");
+  const puppeteer = puppeteerMod.default;
+  return puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+}
+
 /**
  * Lança browser headless, renderiza HTML e devolve PDF como Buffer.
  * Deve ser chamado server-side (route handler).
@@ -16,10 +37,7 @@ export async function generatePDF(
   htmlContent: string,
   opts: PDFOptions = {}
 ): Promise<Buffer> {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  const browser = await launchPdfBrowser();
   try {
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
