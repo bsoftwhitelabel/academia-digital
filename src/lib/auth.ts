@@ -70,16 +70,36 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
 
-          const user = await prisma.user.findUnique({
-            where: { email: credentials.email },
-          });
+          const requestedEmail = String(credentials.email).trim().toLowerCase();
+          const aliasEmails =
+            requestedEmail === "admin.s5@oportoforte.com"
+              ? [requestedEmail, "admin@oportoforte.com"]
+              : requestedEmail === "admin@oportoforte.com"
+                ? [requestedEmail, "admin.s5@oportoforte.com"]
+                : [requestedEmail];
+
+          let user: {
+            id: string;
+            email: string;
+            role: any;
+            tenantId: string;
+            firstName: string;
+            passwordHash: string | null;
+          } | null = null;
+
+          for (const email of aliasEmails) {
+            user = await prisma.user.findUnique({
+              where: { email },
+            });
+            if (user) break;
+          }
 
           if (!user) {
-            console.warn("[auth] user not found", { email: anon(credentials.email) });
+            console.warn("[auth] user not found", { email: anon(requestedEmail) });
             return null;
           }
           if (!user.passwordHash) {
-            console.warn("[auth] user has no passwordHash", { email: anon(credentials.email) });
+            console.warn("[auth] user has no passwordHash", { email: anon(requestedEmail) });
             return null;
           }
 
@@ -89,7 +109,7 @@ export const authOptions: NextAuthOptions = {
           );
 
           if (!isPasswordValid) {
-            console.warn("[auth] invalid password", { email: anon(credentials.email) });
+            console.warn("[auth] invalid password", { email: anon(requestedEmail) });
             return null;
           }
 
